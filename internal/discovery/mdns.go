@@ -15,6 +15,11 @@ const (
 	MaxNodes    = 100
 )
 
+type Discover interface {
+	StartServer(port int) (*mdns.Server, error)
+	DiscoverNodes(handle func(*mdns.ServiceEntry))
+}
+
 // Local Server: port
 func StartServer(port int) (*mdns.Server, error) {
 	host, _ := os.Hostname()
