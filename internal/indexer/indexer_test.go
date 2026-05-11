@@ -3,6 +3,8 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -31,4 +33,38 @@ func TestGenerateIndex(t *testing.T) {
 	} else {
 		t.Error("Test file not found in index")
 	}
+}
+
+func TestPathTraversal(t *testing.T) {
+	tests := []struct {
+		path   string
+		isSafe bool
+	}{
+		{"hello.txt", true},
+		{"docs/images/1.png", true},
+		{"../hello.txt", false},            // 向上跳转
+		{"/etc/passwd", false},             // 绝对路径
+		{"subdir/../../etc/shadow", false}, // 混淆跳转
+		{"..\\windows\\system32", false},   // Windows 风格跳转
+	}
+	for _, tt := range tests {
+		if IsPathSafe(tt.path) != tt.isSafe {
+			t.Errorf("Security Check Failed for path: %v. Expected safe=%v", tt.path, tt.isSafe)
+		}
+	}
+}
+
+func IsPathSafe(path string) bool {
+	cleanPath := filepath.ToSlash(path)
+
+	if filepath.IsAbs(path) || strings.HasPrefix(cleanPath, "/") {
+		return false
+	}
+
+	// 检查是否有跳转符号
+	parts := strings.Split(path, string("/"))
+	if slices.Contains(parts, "..") {
+		return false
+	}
+	return true
 }
