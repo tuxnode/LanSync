@@ -23,6 +23,11 @@ func GeneralIndex(root string) (IndexMap, error) {
 			return nil
 		}
 
+		// 防止路径穿越
+		if relPath == "../" {
+			return nil
+		}
+
 		// 获取目录信息
 		info, _ := d.Info()
 		fileinfo := FileInfo{
