@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/tuxnode/LanSync/internal/indexer"
+	"github.com/tuxnode/LanSync/internal/protocol"
 )
 
 type Event struct {
@@ -21,8 +23,9 @@ type Watcher struct {
 	fsWatcher *fsnotify.Watcher
 	root      string
 	// 防止写入循环
-	mu       sync.RWMutex
-	ignoring map[string]time.Time
+	mu        sync.RWMutex
+	ignoring  map[string]time.Time
+	OnMessage func(msg protocol.SyncMessage)
 }
 
 func isPathSafe(path string) bool {
@@ -85,7 +88,7 @@ func (w *Watcher) WatcherStart() {
 				}
 
 				relPath, err := filepath.Rel(w.root, event.Name)
-				if err != nil && !isPathSafe(relPath) {
+				if err != nil || !isPathSafe(relPath) {
 					continue
 				}
 
@@ -100,7 +103,8 @@ func (w *Watcher) WatcherStart() {
 				// 触发"写入"事件
 				if event.Has(fsnotify.Write) {
 					log.Printf("文件已被修改, %s\n", event.Name)
-					// TODO:触发同步
+					// 触发同步
+					w.handleFileChange(event.Name)
 				}
 
 				// 触发“创建”事件
@@ -137,6 +141,38 @@ func (w *Watcher) WatcherStart() {
 			w.mu.Unlock()
 		}
 	}()
+}
+
+func (w *Watcher) handleFileChange(absPath string) {
+	relPath, err := filepath.Rel(w.root, absPath)
+	if err != nil {
+		return
+	}
+
+	relPath = filepath.ToSlash(relPath)
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return
+	}
+
+	// 计算Hash
+	fileHash, err := indexer.CaculateHash(absPath)
+	if err != nil {
+		return
+	}
+
+	msg := protocol.SyncMessage{
+		Type:    protocol.MsgNotify,
+		RelPath: relPath,
+		Hash:    fileHash,
+		Size:    info.Size(),
+		ModTime: info.ModTime().Unix(),
+	}
+
+	if w.OnMessage != nil {
+		w.OnMessage(msg)
+	}
 }
 
 // 在接收到信息后，添加到ignorepath中
