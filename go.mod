@@ -2,7 +2,10 @@ module github.com/tuxnode/LanSync
 
 go 1.25.0
 
-require github.com/hashicorp/mdns v1.0.6
+require (
+	github.com/fsnotify/fsnotify v1.10.1
+	github.com/hashicorp/mdns v1.0.6
+)
 
 require (
 	github.com/miekg/dns v1.1.55 // indirect
