@@ -72,6 +72,50 @@ func NewWatcher(root string) *Watcher {
 	}
 }
 
+func (w *Watcher) handleFileChange(absPath string) {
+	relPath, err := filepath.Rel(w.root, absPath)
+	if err != nil {
+		return
+	}
+
+	relPath = filepath.ToSlash(relPath)
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return
+	}
+
+	// 计算Hash
+	fileHash, err := indexer.CaculateHash(absPath)
+	if err != nil {
+		return
+	}
+
+	msg := protocol.SyncMessage{
+		Type:    protocol.MsgNotify,
+		RelPath: relPath,
+		Hash:    fileHash,
+		Size:    info.Size(),
+		ModTime: info.ModTime().Unix(),
+	}
+
+	if w.OnMessage != nil {
+		w.OnMessage(msg)
+	}
+}
+
+// 在接收到信息后，添加到ignorepath中
+func (w *Watcher) AddIgnorePath(path string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.ignoring[path] = time.Now()
+}
+
+func (w *Watcher) WatcherStop() {
+	w.fsWatcher.Close()
+}
+
 func (w *Watcher) WatcherStart() {
 	if err := w.watchDirRecursion(w.root); err != nil {
 		log.Printf("[Error]: WatcherStart: Scan Dir Failt: %v", w.root)
@@ -141,48 +185,4 @@ func (w *Watcher) WatcherStart() {
 			w.mu.Unlock()
 		}
 	}()
-}
-
-func (w *Watcher) handleFileChange(absPath string) {
-	relPath, err := filepath.Rel(w.root, absPath)
-	if err != nil {
-		return
-	}
-
-	relPath = filepath.ToSlash(relPath)
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return
-	}
-
-	// 计算Hash
-	fileHash, err := indexer.CaculateHash(absPath)
-	if err != nil {
-		return
-	}
-
-	msg := protocol.SyncMessage{
-		Type:    protocol.MsgNotify,
-		RelPath: relPath,
-		Hash:    fileHash,
-		Size:    info.Size(),
-		ModTime: info.ModTime().Unix(),
-	}
-
-	if w.OnMessage != nil {
-		w.OnMessage(msg)
-	}
-}
-
-// 在接收到信息后，添加到ignorepath中
-func (w *Watcher) AddIgnorePath(path string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.ignoring[path] = time.Now()
-}
-
-func (w *Watcher) WatcherStop() {
-	w.fsWatcher.Close()
 }
