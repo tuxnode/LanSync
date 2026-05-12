@@ -69,4 +69,29 @@ func TestWatcherBasic(t *testing.T) {
 
 	os.Remove(testFile)
 	os.Remove(ignoreFile)
+
+	// 测试递归目录
+	nestedPath := filepath.Join(tempDir, "sub", "test", "deep", "nop")
+	err2 := os.MkdirAll(nestedPath, 0755)
+
+	time.Sleep(100 * time.Millisecond)
+	if err2 != nil {
+		t.Fatalf("Fail to MkdirAll: %v", err2)
+	}
+
+	recurFile := filepath.Join(nestedPath, "recurFile.txt")
+	if err3 := os.WriteFile(recurFile, []byte("recurFile Test"), 0644); err3 != nil {
+		t.Fatalf("Fail to Creat File: %v", err3)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	select {
+	case msg := <-resChan:
+		if msg.RelPath != "sub/test/deep/nop/recurFile.txt" {
+			t.Errorf("recurFile Test Fail: %s", msg.RelPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("WriteFile Test Time out")
+	}
 }
