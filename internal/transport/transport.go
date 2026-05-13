@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -42,17 +43,46 @@ func (t *Transport) SendMessage(conn *net.Conn, msg protocol.SyncMessage) error 
 }
 
 func (t *Transport) BroadCast(msg protocol.SyncMessage) error {
-	for host, conn := range t.peer {
-		err := t.SendMessage(conn, msg)
-		if err != nil {
-			return fmt.Errorf("Fail to BroadCast: %v", err)
-		}
-		log.Printf("SendMessage To Host: %s", host)
+	t.mu.RLock()
+
+	// 复制一份避免长连接，单独处理广播
+	conns := make(map[string]*net.Conn)
+	for h, c := range t.peer {
+		conns[h] = c
+	}
+	t.mu.RUnlock()
+
+	for host, conn := range conns {
+		_ = t.SendMessage(conn, msg)
+		log.Printf("[Transport] 广播到: %s", host)
 	}
 	return nil
 }
 
-// 接收Message并分配goroutine
+func (t *Transport) ConnectTo(addr string) error {
+	t.mu.RLock()
+	_, exits := t.peer[addr]
+	t.mu.RUnlock()
+
+	if exits {
+		log.Printf("[Transport] 已经连接: %s", addr)
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return err
+	}
+
+	t.mu.Lock()
+	t.peer[addr] = &conn
+	t.mu.Unlock()
+
+	// TODO:处理连接
+
+	return nil
+}
+
+// 等待连接，接收Message，为每个连接分配goroutine
 func (t *Transport) Start() error {
 	addr := fmt.Sprintf(":%d", t.Port)
 
@@ -90,9 +120,41 @@ func (t *Transport) accessLoop() {
 		t.mu.Unlock()
 
 		// 为每个连接分配goroutine
-		go t.handleEachConn()
+		go t.handleEachConn(&conn)
 	}
 }
 
-// TODO:为每个连接分配goroutine
-func (t *Transport) handleEachConn() {}
+func (t *Transport) handleEachConn(conn *net.Conn) {
+	defer func() {
+		(*conn).Close()
+		t.mu.Lock()
+		delete(t.peer, (*conn).RemoteAddr().String())
+		t.mu.Unlock()
+	}()
+
+	decoder := json.NewDecoder(*conn)
+
+	for {
+		var msg protocol.SyncMessage
+
+		if err := decoder.Decode(&msg); err != nil {
+			return
+		}
+
+		t.dispatchMsg(&msg, (*conn).RemoteAddr().String())
+	}
+}
+
+// TODO:通知变动
+func (t *Transport) handleNotify(msg *protocol.SyncMessage, remoteAddr string) error {
+}
+
+// TODO:实现Message路由逻辑
+func (t *Transport) dispatchMsg(msg *protocol.SyncMessage, remoteAddr string) {
+	switch msg.Type {
+	case protocol.MsgNotify:
+		if err := t.handleNotify(msg, remoteAddr); err != nil {
+			return
+		}
+	}
+}
