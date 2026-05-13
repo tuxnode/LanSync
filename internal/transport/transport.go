@@ -9,16 +9,17 @@ import (
 	"github.com/tuxnode/LanSync/internal/protocol"
 )
 
-// Transport 定义了网络层的公共API。
-// 上层模块通过逻辑 PeerID 与对等节点交互，不接触原始 net.Conn。
-//
-// 基于时间戳的握手机制：
-//
-//	每个 Transport 实例在创建时通过 NewUUID() 生成 PeerID，
-//	UUID 前6字节编码了毫秒级时间戳，天然保证全序关系。
-//	当两个 peer 之间出现重复 TCP 连接时，PeerID 较小的一方
-//	总是充当 Dialer（主动连接方），较大的一方总是充当
-//	Listener（被动接收方），不符合此角色关系的连接将被关闭。
+/*
+Transport 定义了网络层的公共API。
+上层模块通过逻辑 PeerID 与对等节点交互，不接触原始 net.Conn。
+
+基于时间戳的握手机制：
+每个 Transport 实例在创建时通过 NewUUID() 生成 PeerID，
+UUID 前6字节编码了毫秒级时间戳，天然保证全序关系。
+当两个 peer 之间出现重复 TCP 连接时，PeerID 较小的一方
+总是充当 Dialer（主动连接方），较大的一方总是充当
+Listener（被动接收方），不符合此角色关系的连接将被关闭。
+*/
 type Transport interface {
 	// Start 在配置的端口上开始监听,启动 accept 循环。
 	Start() error
