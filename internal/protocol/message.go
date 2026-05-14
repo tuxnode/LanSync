@@ -23,7 +23,7 @@ type SyncMessage struct {
 	Timestamp int64       `json:"timestamp,omitempty"`
 }
 
-// 构造String转化成文字流
 func (m SyncMessage) String() string {
-	return fmt.Sprintf("Type: %d | Path: %s | Hash: %s", m.Type, m.RelPath, m.Hash)
+	return fmt.Sprintf("Type:%d Path:%s Hash:%s Size:%d ModTime:%d PeerID:%s Timestamp:%d",
+		m.Type, m.RelPath, m.Hash, m.Size, m.ModTime, m.PeerID, m.Timestamp)
 }
