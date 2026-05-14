@@ -17,15 +17,18 @@ func TestNewTransport(t *testing.T) {
 		t.Errorf("NewTransport: UUID 构造出现相同")
 	}
 
-	if TestTrans1.Port() != 8888 {
+	if err := TestTrans1.Start(); err != nil && TestTrans1.Port() != 8888 {
 		t.Errorf("NewTransport: 端口返回值不同")
 	}
 
-	if TestTrans2.Port() != 9999 {
+	if err := TestTrans2.Start(); err != nil && TestTrans2.Port() != 9999 {
 		t.Errorf("NewTransport: 端口返回值不同")
 	}
 
 	TestTrans3 := transport.NewTransport(0)
+	if err := TestTrans3.Start(); err != nil {
+		t.Fatalf("TestNewTransport: Fail to Start Listening")
+	}
 	if TestTrans3.Port() <= 0 {
 		t.Errorf("NewTransport: 构造端口为0的时候，端口小于等于0")
 	}
