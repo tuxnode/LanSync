@@ -1,4 +1,4 @@
-package watch
+package watcher
 
 import (
 	"os"
@@ -11,87 +11,75 @@ import (
 
 func TestWatcherBasic(t *testing.T) {
 	tempDir := t.TempDir()
+	w, err := NewWatcher(tempDir)
+	if err != nil {
+		t.Fatalf("NewWatcher failed: %v", err)
+	}
+	defer w.WatcherStop()
 
-	watcher := NewWatcher(tempDir)
-
-	// 创建一个chan来接受Message
 	resChan := make(chan protocol.SyncMessage, 1)
-
-	watcher.OnMessage = func(msg protocol.SyncMessage) {
+	w.OnMessage = func(msg protocol.SyncMessage) {
 		resChan <- msg
 	}
-
-	// 启动监视器
-	watcher.WatcherStart()
+	w.WatcherStart()
 	time.Sleep(50 * time.Millisecond)
 
-	// 测试WriteFile
-	tempData := "Test WriteFile"
 	testFile := filepath.Join(tempDir, "test.txt")
-
-	// 测试是否成功忽略
 	ignoreFile := filepath.Join(tempDir, "ignore.txt")
-	watcher.AddIgnorePath(ignoreFile)
+	w.AddIgnorePath(ignoreFile)
 
-	// 触发写入
-	erro := os.WriteFile(ignoreFile, []byte("I'm from network"), 0644)
-	if erro != nil {
-		t.Fatalf("WriteFile Test Fail: %v", erro)
+	if err := os.WriteFile(ignoreFile, []byte("I'm from network"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
 	}
-	err := os.WriteFile(testFile, []byte(tempData), 0644)
-	if err != nil {
-		t.Fatalf("WriteFile Test Fail: %v", err)
+	if err := os.WriteFile(testFile, []byte("Test WriteFile"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
 	}
 
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case msg := <-resChan:
+		if msg.RelPath != "test.txt" {
+			t.Errorf("Path mismatch: %s", msg.RelPath)
+		}
+		if msg.Type != protocol.MsgNotify {
+			t.Errorf("Type mismatch: %v", msg.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write file event timed out")
+	}
+
+	// 验证 ignore 文件不会触发回调
+	select {
+	case msg := <-resChan:
+		if msg.RelPath == "ignore.txt" {
+			t.Error("Ignored file triggered callback")
+		}
+	default:
+	}
+
+	// 清理后测试递归目录监听
+	os.Remove(testFile)
+	os.Remove(ignoreFile)
+	time.Sleep(100 * time.Millisecond)
+
+	nestedPath := filepath.Join(tempDir, "sub", "test", "deep", "nop")
+	if err := os.MkdirAll(nestedPath, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	recurFile := filepath.Join(nestedPath, "recurFile.txt")
+	if err := os.WriteFile(recurFile, []byte("recurFile Test"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 	time.Sleep(200 * time.Millisecond)
 
 	select {
 	case msg := <-resChan:
-		if msg.RelPath != "test.txt" {
-			t.Errorf("Path Check Fail: %s", msg.RelPath)
-		}
-		if msg.Type != protocol.MsgNotify {
-			t.Errorf("Message type Fail: %v", msg.Type)
-		}
-		t.Logf("Success: Receive The Message: %v", msg)
-	case <-time.After(2 * time.Second):
-		t.Fatalf("WriteFile Test Time out")
-	}
-
-	select {
-	case msg := <-resChan:
-		if msg.RelPath == "ignore.txt" {
-			t.Errorf("Ignore File Test Fail: %v", msg.RelPath)
-		}
-	default:
-		t.Logf("Success: Test Ignore File")
-	}
-
-	os.Remove(testFile)
-	os.Remove(ignoreFile)
-
-	// 测试递归目录
-	nestedPath := filepath.Join(tempDir, "sub", "test", "deep", "nop")
-	err2 := os.MkdirAll(nestedPath, 0755)
-
-	time.Sleep(100 * time.Millisecond)
-	if err2 != nil {
-		t.Fatalf("Fail to MkdirAll: %v", err2)
-	}
-
-	recurFile := filepath.Join(nestedPath, "recurFile.txt")
-	if err3 := os.WriteFile(recurFile, []byte("recurFile Test"), 0644); err3 != nil {
-		t.Fatalf("Fail to Creat File: %v", err3)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	select {
-	case msg := <-resChan:
 		if msg.RelPath != "sub/test/deep/nop/recurFile.txt" {
-			t.Errorf("recurFile Test Fail: %s", msg.RelPath)
+			t.Errorf("Recursive watch: expected sub/test/deep/nop/recurFile.txt, got %s", msg.RelPath)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("WriteFile Test Time out")
+		t.Fatal("Recursive watch timed out")
 	}
 }
