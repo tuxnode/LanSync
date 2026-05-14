@@ -91,11 +91,48 @@ func NewTransport(port int) Transport {
 }
 
 func (t *tcpTransport) Start() error {
-	return fmt.Errorf("transport: Start not implemented")
+	addr := fmt.Sprintf(":%d", t.port)
+
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("Transport: Listen on %s %v", addr, err)
+	}
+
+	t.listener = l
+	if t.port == 0 {
+		t.port = l.Addr().(*net.TCPAddr).Port
+	}
+
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
+		t.accessLoop()
+	}()
+
+	return nil
 }
 
 func (t *tcpTransport) Stop() error {
-	return fmt.Errorf("transport: Stop not implemented")
+	if t.listener == nil {
+		return fmt.Errorf("transport: Stop before Start, or already stopped")
+	}
+
+	t.listener.Close()
+
+	t.mu.Lock()
+	for _, pc := range t.peers {
+		pc.conn.Close()
+	}
+	t.mu.Unlock()
+
+	t.wg.Wait()
+
+	t.mu.Lock()
+	t.peers = make(map[string]*peerConn)
+	t.mu.Unlock()
+
+	t.listener = nil
+	return nil
 }
 
 func (t *tcpTransport) ConnectTo(addr string) error {

@@ -32,6 +32,9 @@ func TestNewTransport(t *testing.T) {
 	if TestTrans3.Port() <= 0 {
 		t.Errorf("NewTransport: 构造端口为0的时候，端口小于等于0")
 	}
+	TestTrans1.Stop()
+	TestTrans2.Stop()
+	TestTrans3.Stop()
 }
 
 func TestServer(t *testing.T) {
@@ -56,6 +59,7 @@ func TestServer(t *testing.T) {
 		t.Errorf("TestServer: 启动被占用的端口期望返回error")
 	}
 	l.Close()
+	testTrans.Stop()
 }
 
 func TestStop(t *testing.T) {
