@@ -125,14 +125,18 @@ func (w *Watcher) WatcherStart() {
 					w.handleFileChange(event.Name)
 				}
 
-				if event.Has(fsnotify.Create) {
-					info, err := os.Stat(event.Name)
-					if err == nil && info.IsDir() {
-						w.fsWatcher.Add(event.Name)
-					}
-					log.Printf("文件已经创建: %s", event.Name)
+			if event.Has(fsnotify.Create) {
+				info, err := os.Stat(event.Name)
+				if err == nil && info.IsDir() {
+					w.fsWatcher.Add(event.Name)
+					log.Printf("正在监听目录: %v", event.Name)
 					w.watchDirRecursion(event.Name)
 				}
+				log.Printf("文件已经创建: %s", event.Name)
+				if err == nil && !info.IsDir() {
+					w.handleFileChange(event.Name)
+				}
+			}
 			case err, ok := <-w.fsWatcher.Errors:
 				if !ok {
 					return

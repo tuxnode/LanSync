@@ -54,6 +54,7 @@ func DiscoverNodes(handle func(*mdns.ServiceEntry)) {
 	params := mdns.DefaultParams(ServiceType)
 	params.Entries = entriesChan
 	params.Timeout = time.Second * 2
+	params.DisableIPv6 = true
 
 	err := mdns.Query(params)
 	close(entriesChan)
