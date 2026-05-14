@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -15,19 +14,14 @@ const (
 	MaxNodes    = 100
 )
 
-type Discover interface {
-	StartServer(port int) (*mdns.Server, error)
-	DiscoverNodes(handle func(*mdns.ServiceEntry))
-}
-
-// Local Server: port
 func StartServer(port int) (*mdns.Server, error) {
-	host, _ := os.Hostname()
-
-	// 额外处理hostname
+	host, err := os.Hostname()
+	if err != nil {
+		log.Printf("StartServer: os.Hostname failed: %v, using fallback", err)
+		host = "lansync-node"
+	}
 	host = strings.ReplaceAll(host, ".", "-")
 
-	// defien mdns server mete data
 	service, err := mdns.NewMDNSService(
 		host, ServiceType, "", "", port, nil, []string{"v=1.0"},
 	)
@@ -42,17 +36,16 @@ func StartServer(port int) (*mdns.Server, error) {
 		return nil, err
 	}
 
-	log.Print("StartServer: mdns server start")
+	log.Printf("StartServer: mDNS server started on port %d", port)
 	return server, nil
 }
 
-// Discover Nodes
 func DiscoverNodes(handle func(*mdns.ServiceEntry)) {
 	entriesChan := make(chan *mdns.ServiceEntry, MaxNodes)
 
 	go func() {
 		for entry := range entriesChan {
-			fmt.Printf("[Discovery] Found Node: %s, IP: %s, Port: %d\n",
+			log.Printf("[Discovery] Found Node: %s, IP: %s, Port: %d",
 				entry.Name, entry.AddrV4, entry.Port)
 			handle(entry)
 		}
@@ -63,7 +56,9 @@ func DiscoverNodes(handle func(*mdns.ServiceEntry)) {
 	params.Timeout = time.Second * 2
 
 	err := mdns.Query(params)
+	close(entriesChan)
+
 	if err != nil {
-		log.Printf("DiscoverNodes: Query Failt, %v\n", err)
+		log.Printf("DiscoverNodes: Query Failed: %v", err)
 	}
 }
