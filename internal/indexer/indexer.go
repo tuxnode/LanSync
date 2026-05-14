@@ -6,9 +6,27 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
-// 扫描目录并生成index
+// IsPathSafe 检查相对路径是否安全（无路径穿越、非绝对路径）。
+func IsPathSafe(relPath string) bool {
+	if filepath.IsAbs(relPath) {
+		return false
+	}
+
+	// 统一斜杠方向，处理 Windows 风格路径
+	normalized := strings.ReplaceAll(relPath, "\\", "/")
+	if strings.HasPrefix(normalized, "/") {
+		return false
+	}
+
+	parts := strings.Split(normalized, "/")
+	return !slices.Contains(parts, "..")
+}
+
+// GeneralIndex 扫描目录并生成 FileInfo 索引。
 func GeneralIndex(root string) (IndexMap, error) {
 	index := make(IndexMap)
 
@@ -17,19 +35,23 @@ func GeneralIndex(root string) (IndexMap, error) {
 			return nil
 		}
 
-		// 返回相对路径
-		relPath, _ := filepath.Rel(root, path)
+		relPath, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
 		if relPath == "." {
 			return nil
 		}
 
-		// 防止路径穿越
-		if relPath == "../" {
+		if !IsPathSafe(relPath) {
 			return nil
 		}
 
-		// 获取目录信息
-		info, _ := d.Info()
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
+
 		fileinfo := FileInfo{
 			RelPath:  relPath,
 			Size:     info.Size(),
@@ -37,7 +59,6 @@ func GeneralIndex(root string) (IndexMap, error) {
 			IsFolder: d.IsDir(),
 		}
 
-		// 如果是文件，则处理hash
 		if !d.IsDir() {
 			hash, err := CaculateHash(path)
 			if err != nil {

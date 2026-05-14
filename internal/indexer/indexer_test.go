@@ -3,68 +3,119 @@ package indexer
 import (
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 )
 
 func TestGenerateIndex(t *testing.T) {
-	// 1. 创建临时测试目录
-	tmpDir, _ := os.MkdirTemp("", "indexer_test")
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	// 2. 创建一个测试文件
 	testFile := filepath.Join(tmpDir, "hello.txt")
-	os.WriteFile(testFile, []byte("hello world"), 0644)
-
-	// 3. 生成索引
-	index, err := GeneralIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to generate index: %v", err)
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	// 4. 验证结果
+	index, err := GeneralIndex(tmpDir)
+	if err != nil {
+		t.Fatalf("生成索引失败: %v", err)
+	}
+
 	if info, ok := index["hello.txt"]; ok {
-		t.Logf("Found file: %s, Hash: %s", info.RelPath, info.Hash)
 		expectedHash := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 		if info.Hash != expectedHash {
-			t.Errorf("Hash mismatch! Expected %s, got %s", expectedHash, info.Hash)
+			t.Errorf("Hash: 期望 %s, 实际 %s", expectedHash, info.Hash)
+		}
+		if info.Size != 11 {
+			t.Errorf("Size: 期望 11, 实际 %d", info.Size)
+		}
+		if info.IsFolder {
+			t.Error("文件被误判为目录")
 		}
 	} else {
-		t.Error("Test file not found in index")
+		t.Error("索引中未找到 hello.txt")
 	}
 }
 
-func TestPathTraversal(t *testing.T) {
+func TestGenerateIndexWithDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "subdir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	nestedFile := filepath.Join(subDir, "nested.txt")
+	if err := os.WriteFile(nestedFile, []byte("nested"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := GeneralIndex(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 目录也被索引
+	if info, ok := index["subdir"]; !ok || !info.IsFolder {
+		t.Error("目录 subdir 未被正确索引")
+	}
+
+	// 嵌套文件也被索引
+	if info, ok := index["subdir/nested.txt"]; !ok {
+		t.Error("嵌套文件未被索引")
+	} else if info.Hash == "" {
+		t.Error("嵌套文件 Hash 为空")
+	}
+}
+
+func TestGenerateIndexEmptyDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	index, err := GeneralIndex(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(index) != 0 {
+		t.Errorf("空目录索引应为空，实际 %d 条", len(index))
+	}
+}
+
+func TestIsPathSafe(t *testing.T) {
 	tests := []struct {
 		path   string
 		isSafe bool
 	}{
 		{"hello.txt", true},
 		{"docs/images/1.png", true},
-		{"../hello.txt", false},            // 向上跳转
-		{"/etc/passwd", false},             // 绝对路径
-		{"subdir/../../etc/shadow", false}, // 混淆跳转
-		{"..\\windows\\system32", false},   // Windows 风格跳转
+		{"../hello.txt", false},
+		{"/etc/passwd", false},
+		{"subdir/../../etc/shadow", false},
+		{"..\\windows\\system32", false},
+		{".", true},
+		{"", true},
+		{"a/b/..", false},
 	}
 	for _, tt := range tests {
 		if IsPathSafe(tt.path) != tt.isSafe {
-			t.Errorf("Security Check Failed for path: %v. Expected safe=%v", tt.path, tt.isSafe)
+			t.Errorf("IsPathSafe(%q) = %v, 期望 %v", tt.path, IsPathSafe(tt.path), tt.isSafe)
 		}
 	}
 }
 
-func IsPathSafe(path string) bool {
-	cleanPath := filepath.ToSlash(path)
+func TestCalculateHash(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "hash_test.txt")
+	content := "hello world"
+	os.WriteFile(testFile, []byte(content), 0644)
 
-	if filepath.IsAbs(path) || strings.HasPrefix(cleanPath, "/") {
-		return false
+	hash, err := CaculateHash(testFile)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// 检查是否有跳转符号
-	parts := strings.Split(path, string("/"))
-	if slices.Contains(parts, "..") {
-		return false
+	expected := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	if hash != expected {
+		t.Errorf("Hash: 期望 %s, 实际 %s", expected, hash)
 	}
-	return true
+
+	// 不存在的文件
+	_, err = CaculateHash(filepath.Join(tmpDir, "nonexistent"))
+	if err == nil {
+		t.Error("不存在的文件应返回错误")
+	}
 }
