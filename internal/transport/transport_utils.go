@@ -111,21 +111,48 @@ func (t *tcpTransport) handshake(conn net.Conn, direction string) (string, error
 		}
 	}
 
-	// 裁决：PeerID 较小者充当 Dialer，较大者充当 Acceptor。
-	// 若当前连接的角色与裁决结果不符，发送拒绝并返回错误。
-	if t.myID < remotePeerID && direction == Accept ||
-		t.myID > remotePeerID && direction == Dial {
-		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
-		return "", fmt.Errorf("handshake: tie-break lost")
-	}
-
-	// 去重：同一 remotePeerID 只保留一条连接
+	// 注册 + 去重裁决。
+	// 首次连接直接注册；若已有同 PeerID 的连接，分两种情况：
+	//   - 同向重复（两次 dial 或两次 accept）：直接拒绝新连接
+	//   - 双向重复（一方 dial 一方 accept）：按 ID 角色保留正确的那条
 	t.mu.Lock()
-	if _, exists := t.peers[remotePeerID]; exists {
+	existing, exists := t.peers[remotePeerID]
+	if exists {
+		if existing.direction == direction {
+			// 同向重复连接，保留已有，拒绝当前
+			t.mu.Unlock()
+			encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
+			return "", fmt.Errorf("handshake: duplicate peer %s", remotePeerID)
+		}
+
+		// 双向连接裁决：PeerID 较小者充当 Dialer，较大者充当 Acceptor。
+		// 比较当前连接与已有连接的方向，保留角色正确的那条。
+		keepExisting := false
+		if direction == Dial {
+			// 当前是 Dialer → 较小 ID 应保留 Dial 连接
+			if t.myID < remotePeerID {
+				existing.conn.Close()
+				t.peers[remotePeerID] = &peerConn{conn: conn, peerID: remotePeerID, direction: direction}
+			} else {
+				keepExisting = true
+			}
+		} else {
+			// 当前是 Acceptor → 较大 ID 应保留 Accept 连接
+			if t.myID > remotePeerID {
+				existing.conn.Close()
+				t.peers[remotePeerID] = &peerConn{conn: conn, peerID: remotePeerID, direction: direction}
+			} else {
+				keepExisting = true
+			}
+		}
 		t.mu.Unlock()
-		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
-		return "", fmt.Errorf("handshake: duplicate peer %s", remotePeerID)
+		if keepExisting {
+			encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
+			return "", fmt.Errorf("handshake: duplicate, keeping existing conn")
+		}
+		return remotePeerID, nil
 	}
+	// 首次连接，直接注册
 	t.peers[remotePeerID] = &peerConn{conn: conn, peerID: remotePeerID, direction: direction}
 	t.mu.Unlock()
 
@@ -184,7 +211,9 @@ func (t *tcpTransport) dispatchMsg(msg *protocol.SyncMessage, remotePeerID strin
 			t.onMessage(remotePeerID, *msg)
 		}
 	case protocol.MsgError:
-		log.Printf("[Transport] 来自 %s 的错误", remotePeerID)
+		if t.onMessage != nil {
+			t.onMessage(remotePeerID, *msg)
+		}
 	case protocol.MsgHandShake:
 		// 已握手完成，忽略重入
 	case protocol.MsgHandShakeReject:

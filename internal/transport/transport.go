@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
@@ -159,11 +160,29 @@ func (t *tcpTransport) ConnectTo(addr string) error {
 }
 
 func (t *tcpTransport) SendTo(peerID string, msg protocol.SyncMessage) error {
-	return fmt.Errorf("transport: SendTo not implemented")
+	t.mu.RLock()
+	pc, exists := t.peers[peerID]
+	t.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("transport: peer %s not found", peerID)
+	}
+	pc.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return json.NewEncoder(pc.conn).Encode(msg)
 }
 
 func (t *tcpTransport) Broadcast(msg protocol.SyncMessage) error {
-	return fmt.Errorf("transport: Broadcast not implemented")
+	t.mu.RLock()
+	peers := make([]*peerConn, 0, len(t.peers))
+	for _, pc := range t.peers {
+		peers = append(peers, pc)
+	}
+	t.mu.RUnlock()
+
+	for _, pc := range peers {
+		pc.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_ = json.NewEncoder(pc.conn).Encode(msg)
+	}
+	return nil
 }
 
 func (t *tcpTransport) OnMessage(handler func(peerID string, msg protocol.SyncMessage)) {
