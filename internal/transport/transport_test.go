@@ -10,39 +10,48 @@ import (
 )
 
 func TestNewTransport(t *testing.T) {
-	TestTrans1 := transport.NewTransport(8888)
-	TestTrans2 := transport.NewTransport(9999)
+	tr1 := transport.NewTransport(8888)
+	tr2 := transport.NewTransport(9999)
 
-	if TestTrans1.MyID() == TestTrans2.MyID() {
+	if tr1.MyID() == tr2.MyID() {
 		t.Errorf("NewTransport: UUID 构造出现相同")
 	}
 
-	if err := TestTrans1.Start(); err != nil && TestTrans1.Port() != 8888 {
-		t.Errorf("NewTransport: 端口返回值不同")
+	if err := tr1.Start(); err != nil {
+		t.Fatalf("NewTransport: 启动失败 %v", err)
+	}
+	defer tr1.Stop()
+	if tr1.Port() != 8888 {
+		t.Errorf("NewTransport: tr1 端口期望 8888，实际 %d", tr1.Port())
 	}
 
-	if err := TestTrans2.Start(); err != nil && TestTrans2.Port() != 9999 {
-		t.Errorf("NewTransport: 端口返回值不同")
+	if err := tr2.Start(); err != nil {
+		t.Fatalf("NewTransport: 启动失败 %v", err)
+	}
+	defer tr2.Stop()
+	if tr2.Port() != 9999 {
+		t.Errorf("NewTransport: tr2 端口期望 9999，实际 %d", tr2.Port())
 	}
 
-	TestTrans3 := transport.NewTransport(0)
-	if err := TestTrans3.Start(); err != nil {
-		t.Fatalf("TestNewTransport: Fail to Start Listening")
+	tr3 := transport.NewTransport(0)
+	if err := tr3.Start(); err != nil {
+		t.Fatal(err)
 	}
-	if TestTrans3.Port() <= 0 {
+	defer tr3.Stop()
+	if tr3.Port() <= 0 {
 		t.Errorf("NewTransport: 构造端口为0的时候，端口小于等于0")
 	}
-	TestTrans1.Stop()
-	TestTrans2.Stop()
-	TestTrans3.Stop()
 }
 
 func TestServer(t *testing.T) {
-	testTrans := transport.NewTransport(9999)
-	testTrans.Start()
+	testTrans := transport.NewTransport(0)
+	if err := testTrans.Start(); err != nil {
+		t.Fatalf("TestServer: 无法启动服务 %v", err)
+	}
+	defer testTrans.Stop()
 
 	// 检查端口是否可达
-	conn, err := net.DialTimeout("tcp", "localhost:9999", time.Second)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", testTrans.Port()), time.Second)
 	if err != nil {
 		t.Fatalf("TestServer: 无法创建连接 %v", err)
 	}
@@ -59,11 +68,10 @@ func TestServer(t *testing.T) {
 		t.Errorf("TestServer: 启动被占用的端口期望返回error")
 	}
 	l.Close()
-	testTrans.Stop()
 }
 
 func TestStop(t *testing.T) {
-	tr := transport.NewTransport(9999)
+	tr := transport.NewTransport(0)
 	if err := tr.Start(); err != nil {
 		t.Fatalf("TestStop: 无法启动服务 %v", err)
 	}
@@ -73,7 +81,7 @@ func TestStop(t *testing.T) {
 		t.Fatalf("TestStop: 无法停止服务 %v", err)
 	}
 
-	_, err := net.DialTimeout("tcp", fmt.Sprintf(":%d", port), time.Second)
+	_, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
 	if err == nil {
 		t.Errorf("TestStop: 服务仍可连接，期望无法连接")
 	}
@@ -93,8 +101,7 @@ func TestStop(t *testing.T) {
 }
 
 func TestConnect(t *testing.T) {
-	port := 1234
-	tr := transport.NewTransport(port)
+	tr := transport.NewTransport(0)
 
 	if err := tr.Start(); err != nil {
 		t.Fatalf("TestConnect: 启动服务失败 %v", err)
