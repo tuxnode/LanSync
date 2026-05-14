@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/tuxnode/LanSync/internal/protocol"
 )
@@ -136,7 +137,18 @@ func (t *tcpTransport) Stop() error {
 }
 
 func (t *tcpTransport) ConnectTo(addr string) error {
-	return fmt.Errorf("transport: ConnectTo not implemented")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("transport: ConnectTo %s: %w", addr, err)
+	}
+
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
+		t.handleConn(conn, Dial)
+	}()
+
+	return nil
 }
 
 func (t *tcpTransport) SendTo(peerID string, msg protocol.SyncMessage) error {

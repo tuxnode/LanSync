@@ -3,10 +3,18 @@ package transport
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"time"
+
+	"github.com/tuxnode/LanSync/internal/protocol"
+)
+
+const (
+	Accept = "accept"
+	Dial   = "dial"
 )
 
 /*
@@ -51,16 +59,102 @@ func (t *tcpTransport) accessLoop() {
 		t.wg.Add(1)
 		go func() {
 			defer t.wg.Done()
-			t.handleConn(conn)
+			t.handleConn(conn, Accept)
 		}()
 	}
 }
 
 // handleConn 处理单条 TCP 连接的生命周期：
 // 握手 → 裁决 → 消息收发循环 → 清理。
-func (t *tcpTransport) handleConn(conn net.Conn) {
+func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
 	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	// TODO: 握手 + 裁决 + 消息循环
-	log.Printf("[Transport] 连接 %s 暂未实现处理逻辑，关闭", conn.RemoteAddr())
+	decoder := json.NewDecoder(conn)
+	encoder := json.NewEncoder(conn)
+
+	myHandshake := protocol.SyncMessage{
+		Type:      protocol.MsgHandShake,
+		PeerID:    t.myID,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	var remotePeerID string
+
+	if direction == Dial {
+		if err := encoder.Encode(myHandshake); err != nil {
+			return
+		}
+		var remoteMsg protocol.SyncMessage
+		if err := decoder.Decode(&remoteMsg); err != nil || remoteMsg.Type != protocol.MsgHandShake {
+			return
+		}
+		remotePeerID = remoteMsg.PeerID
+	} else {
+		var remoteMsg protocol.SyncMessage
+		if err := decoder.Decode(&remoteMsg); err != nil || remoteMsg.Type != protocol.MsgHandShake {
+			return
+		}
+		remotePeerID = remoteMsg.PeerID
+		if err := encoder.Encode(myHandshake); err != nil {
+			return
+		}
+	}
+
+	// 裁决：获胜方应充当 Dialer，落败方应充当 Acceptor
+	if t.myID < remotePeerID && direction == Accept ||
+		t.myID > remotePeerID && direction == Dial {
+		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
+		return
+	}
+
+	// 去重：同一 PeerID 只允许保留一条连接。
+	// 握手裁决保证了双方角色一致，但裁决无法防止同一 peer 先后发起多次连接。
+	// 此处兜底：若 peers 中已存在该 remotePeerID，关闭当前连接。
+	t.mu.Lock()
+	if _, exists := t.peers[remotePeerID]; exists {
+		t.mu.Unlock()
+		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
+		return
+	}
+	t.peers[remotePeerID] = &peerConn{conn: conn, peerID: remotePeerID, direction: direction}
+	t.mu.Unlock()
+
+	defer func() {
+		t.mu.Lock()
+		delete(t.peers, remotePeerID)
+		t.mu.Unlock()
+	}()
+
+	conn.SetDeadline(time.Time{})
+	for {
+		var msg protocol.SyncMessage
+		if err := decoder.Decode(&msg); err != nil {
+			return
+		}
+		t.dispatchMsg(&msg, remotePeerID)
+	}
+}
+
+func (t *tcpTransport) dispatchMsg(msg *protocol.SyncMessage, remotePeerID string) {
+	switch msg.Type {
+	case protocol.MsgNotify:
+		if t.onMessage != nil {
+			t.onMessage(remotePeerID, *msg)
+		}
+	case protocol.MsgPullRequest:
+		if t.onMessage != nil {
+			t.onMessage(remotePeerID, *msg)
+		}
+	case protocol.MsgFileData:
+		if t.onMessage != nil {
+			t.onMessage(remotePeerID, *msg)
+		}
+	case protocol.MsgError:
+		log.Printf("[Transport] 来自 %s 的错误", remotePeerID)
+	case protocol.MsgHandShake:
+		// 已握手完成，忽略重入
+	case protocol.MsgHandShakeReject:
+		// 对方裁决落败放弃，关闭连接
+	}
 }
