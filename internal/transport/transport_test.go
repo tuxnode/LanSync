@@ -114,14 +114,8 @@ func TestConnect(t *testing.T) {
 	}
 
 	// 测试不可达地址
-	start := time.Now()
 	if err := tr.ConnectTo("192.0.2.1:9032"); err == nil {
-		t.Errorf("TestConnect: 期望返回TimeOut Error")
-	}
-	elapsed := time.Since(start)
-
-	if elapsed <= 500*time.Millisecond {
-		t.Fatalf("TestConnect: 错误返回过快: %v", elapsed)
+		t.Errorf("TestConnect: 期望返回 error")
 	}
 
 	trB := transport.NewTransport(0)

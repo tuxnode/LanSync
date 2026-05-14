@@ -142,10 +142,17 @@ func (t *tcpTransport) ConnectTo(addr string) error {
 		return fmt.Errorf("transport: ConnectTo %s: %w", addr, err)
 	}
 
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	remotePeerID, err := t.handshake(conn, Dial)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("transport: ConnectTo %s: %w", addr, err)
+	}
+
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
-		t.handleConn(conn, Dial)
+		t.readLoop(conn, remotePeerID)
 	}()
 
 	return nil

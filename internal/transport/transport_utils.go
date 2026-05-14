@@ -64,12 +64,9 @@ func (t *tcpTransport) accessLoop() {
 	}
 }
 
-// handleConn 处理单条 TCP 连接的生命周期：
-// 握手 → 裁决 → 消息收发循环 → 清理。
-func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-
+// handshake 执行握手协议：交换 PeerID → 裁决 → 去重 → 注册。
+// 成功时返回对方 PeerID，调用方负责后续消息循环和连接清理。
+func (t *tcpTransport) handshake(conn net.Conn, direction string) (string, error) {
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
 
@@ -83,43 +80,62 @@ func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
 
 	if direction == Dial {
 		if err := encoder.Encode(myHandshake); err != nil {
-			return
+			return "", fmt.Errorf("handshake: send my handshake: %w", err)
 		}
+
 		var remoteMsg protocol.SyncMessage
-		if err := decoder.Decode(&remoteMsg); err != nil || remoteMsg.Type != protocol.MsgHandShake {
-			return
+		if err := decoder.Decode(&remoteMsg); err != nil {
+			return "", fmt.Errorf("handshake: receive remote handshake: %w", err)
+		}
+
+		// 对方握手失败，发来拒绝
+		if remoteMsg.Type == protocol.MsgHandShakeReject {
+			return "", fmt.Errorf("handshake: remote rejected")
+		}
+		if remoteMsg.Type != protocol.MsgHandShake {
+			return "", fmt.Errorf("handshake: expected Handshake, got type=%d", remoteMsg.Type)
 		}
 		remotePeerID = remoteMsg.PeerID
 	} else {
 		var remoteMsg protocol.SyncMessage
-		if err := decoder.Decode(&remoteMsg); err != nil || remoteMsg.Type != protocol.MsgHandShake {
-			return
+		if err := decoder.Decode(&remoteMsg); err != nil {
+			return "", fmt.Errorf("handshake: receive remote handshake: %w", err)
+		}
+		if remoteMsg.Type != protocol.MsgHandShake {
+			return "", fmt.Errorf("handshake: expected Handshake, got type=%d", remoteMsg.Type)
 		}
 		remotePeerID = remoteMsg.PeerID
+
 		if err := encoder.Encode(myHandshake); err != nil {
-			return
+			return "", fmt.Errorf("handshake: send my handshake: %w", err)
 		}
 	}
 
-	// 裁决：获胜方应充当 Dialer，落败方应充当 Acceptor
+	// 裁决：PeerID 较小者充当 Dialer，较大者充当 Acceptor。
+	// 若当前连接的角色与裁决结果不符，发送拒绝并返回错误。
 	if t.myID < remotePeerID && direction == Accept ||
 		t.myID > remotePeerID && direction == Dial {
 		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
-		return
+		return "", fmt.Errorf("handshake: tie-break lost")
 	}
 
-	// 去重：同一 PeerID 只允许保留一条连接。
-	// 握手裁决保证了双方角色一致，但裁决无法防止同一 peer 先后发起多次连接。
-	// 此处兜底：若 peers 中已存在该 remotePeerID，关闭当前连接。
+	// 去重：同一 remotePeerID 只保留一条连接
 	t.mu.Lock()
 	if _, exists := t.peers[remotePeerID]; exists {
 		t.mu.Unlock()
 		encoder.Encode(protocol.SyncMessage{Type: protocol.MsgHandShakeReject})
-		return
+		return "", fmt.Errorf("handshake: duplicate peer %s", remotePeerID)
 	}
 	t.peers[remotePeerID] = &peerConn{conn: conn, peerID: remotePeerID, direction: direction}
 	t.mu.Unlock()
 
+	return remotePeerID, nil
+}
+
+// readLoop 循环读取消息并分发给上层回调，直到连接断开。
+// 调用方负责通过 wg 跟踪此 goroutine 的生命周期。
+func (t *tcpTransport) readLoop(conn net.Conn, remotePeerID string) {
+	defer conn.Close()
 	defer func() {
 		t.mu.Lock()
 		delete(t.peers, remotePeerID)
@@ -127,6 +143,8 @@ func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
 	}()
 
 	conn.SetDeadline(time.Time{})
+	decoder := json.NewDecoder(conn)
+
 	for {
 		var msg protocol.SyncMessage
 		if err := decoder.Decode(&msg); err != nil {
@@ -134,6 +152,21 @@ func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
 		}
 		t.dispatchMsg(&msg, remotePeerID)
 	}
+}
+
+// handleConn 处理单条 TCP 连接的生命周期：
+// 握手 → 裁决 → 消息收发循环 → 清理。
+func (t *tcpTransport) handleConn(conn net.Conn, direction string) {
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	remotePeerID, err := t.handshake(conn, direction)
+	if err != nil {
+		conn.Close()
+		log.Printf("[Transport] 握手失败: %v", err)
+		return
+	}
+
+	t.readLoop(conn, remotePeerID)
 }
 
 func (t *tcpTransport) dispatchMsg(msg *protocol.SyncMessage, remotePeerID string) {
