@@ -159,7 +159,7 @@ func (ds *daemonState) connectedCount() int {
 
 // ─── HTTP API ──────────────────────────────────────────────
 
-func (ds *daemonState) serveHTTP(httpPort int) *http.Server {
+func (ds *daemonState) httpHandler(httpPort int) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
@@ -237,9 +237,13 @@ func (ds *daemonState) serveHTTP(httpPort int) *http.Server {
 		})
 	})
 
+	return mux
+}
+
+func (ds *daemonState) serveHTTP(httpPort int) *http.Server {
 	srv := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", httpPort),
-		Handler: mux,
+		Handler: ds.httpHandler(httpPort),
 	}
 
 	go func() {
