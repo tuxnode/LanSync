@@ -601,13 +601,15 @@ func runDaemon(args []string) {
 	fsw.WatcherStart()
 	defer fsw.WatcherStop()
 
-	// 初始化 mDNS
+	// 初始化 mDNS（失败不阻止启动，仅丧失自动发现/被发现的能⼒）
 	mds, err := discovery.StartServer(actualPort)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "启动 mDNS 发现服务失败: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "警告: mDNS 服务启动失败: %v (自动发现不可用)\n", err)
+		mds = nil
 	}
-	defer mds.Shutdown()
+	if mds != nil {
+		defer mds.Shutdown()
+	}
 
 	// 构建状态
 	ds := newDaemonState()

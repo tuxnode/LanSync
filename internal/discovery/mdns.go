@@ -1,7 +1,9 @@
 package discovery
 
 import (
+	"io"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +15,32 @@ const (
 	ServiceType = "_lansync._tcp"
 	MaxNodes    = 100
 )
+
+func findBestInterface() *net.Interface {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+				return &iface
+			}
+		}
+	}
+	return nil
+}
+
+func quietLogger() *log.Logger {
+	return log.New(io.Discard, "", 0)
+}
 
 func StartServer(port int) (*mdns.Server, error) {
 	host, err := os.Hostname()
@@ -29,7 +57,11 @@ func StartServer(port int) (*mdns.Server, error) {
 		return nil, err
 	}
 
-	config := &mdns.Config{Zone: service}
+	config := &mdns.Config{
+		Zone:   service,
+		Iface:  findBestInterface(),
+		Logger: quietLogger(),
+	}
 
 	server, err := mdns.NewServer(config)
 	if err != nil {
@@ -55,6 +87,8 @@ func DiscoverNodes(handle func(*mdns.ServiceEntry)) {
 	params.Entries = entriesChan
 	params.Timeout = time.Second * 2
 	params.DisableIPv6 = true
+	params.Interface = findBestInterface()
+	params.Logger = quietLogger()
 
 	err := mdns.Query(params)
 	close(entriesChan)
