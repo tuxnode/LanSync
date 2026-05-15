@@ -29,9 +29,9 @@ import (
 type peerStatus int
 
 const (
-	stFound     peerStatus = iota
-	stConnected
-	stLost
+	stLost      peerStatus = iota // 离线
+	stFound                       // mDNS 发现
+	stConnected                   // 已建立连接
 )
 
 func (s peerStatus) String() string {
@@ -112,6 +112,10 @@ func (ds *daemonState) upsertPeer(addr, hostname string, st peerStatus) {
 	defer ds.mu.Unlock()
 
 	if existing, ok := ds.peers[addr]; ok {
+		// 离线冷却：刚标记离线的节点不立即被 mDNS 缓存刷回在线
+		if existing.Status == stLost.String() && st == stFound && time.Since(existing.LastSeen) < 5*time.Second {
+			return
+		}
 		// 不降级：已连接 > 在线 > 离线
 		if st > statusFromString(existing.Status) || existing.Status == stFound.String() && st == stConnected {
 			existing.Status = st.String()
@@ -269,6 +273,8 @@ func (ds *daemonState) discoveryLoop() {
 		default:
 		}
 
+		foundThisRound := make(map[string]bool)
+
 		discovery.DiscoverNodes(func(entry *mdns.ServiceEntry) {
 			if entry.AddrV4 == nil || len(entry.AddrV4) == 0 {
 				return
@@ -285,10 +291,21 @@ func (ds *daemonState) discoveryLoop() {
 			}
 			hostname = strings.ReplaceAll(hostname, "-", ".")
 
+			foundThisRound[addr] = true
 			ds.upsertPeer(addr, hostname, stFound)
 
 			go ds.tryConnect(addr, hostname)
 		})
+
+		// 标记本轮未再出现的发现态节点为离线（已连接的不受影响）
+		ds.mu.Lock()
+		for addr, p := range ds.peers {
+			if p.Status == stFound.String() && !foundThisRound[addr] {
+				p.Status = stLost.String()
+				p.LastSeen = time.Now()
+			}
+		}
+		ds.mu.Unlock()
 
 		select {
 		case <-ds.quitCh:
@@ -528,28 +545,13 @@ func (ds *daemonState) removePeerByID(peerID string) {
 	defer ds.mu.Unlock()
 
 	delete(ds.indexSent, peerID)
+	delete(ds.peerIDToAddr, peerID)
 
-	addr, ok := ds.peerIDToAddr[peerID]
-	if ok {
-		delete(ds.peerIDToAddr, peerID)
-		if _, exists := ds.peers[addr]; exists {
-			delete(ds.peers, addr)
-			for i, a := range ds.peerOrder {
-				if a == addr {
-					ds.peerOrder = append(ds.peerOrder[:i], ds.peerOrder[i+1:]...)
-					break
-				}
-			}
-		}
-		return
-	}
-
-	// 无地址映射（入站连接等）：遍历所有已连接条目标记为离线
-	for addr, p := range ds.peers {
+	// 标记离线而非删除：防止 mDNS 缓存下一轮又重新创建条目
+	for _, p := range ds.peers {
 		if p.Status == stConnected.String() {
 			p.Status = stLost.String()
 			p.LastSeen = time.Now()
-			_ = addr
 		}
 	}
 }
