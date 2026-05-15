@@ -189,6 +189,30 @@ func (ds *daemonState) serveHTTP(httpPort int) *http.Server {
 		})
 	})
 
+	mux.HandleFunc("/api/connect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeJSON(w, map[string]interface{}{"error": "仅支持 POST"})
+			return
+		}
+
+		var body struct {
+			Addr string `json:"addr"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Addr == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]interface{}{"error": "缺少 addr 参数"})
+			return
+		}
+
+		go ds.tryConnect(body.Addr, body.Addr)
+
+		writeJSON(w, map[string]interface{}{
+			"status": "ok",
+			"addr":   body.Addr,
+		})
+	})
+
 	srv := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", httpPort),
 		Handler: mux,
@@ -295,6 +319,7 @@ func runDaemon(args []string) {
 	dirFlag := fs.String("dir", "", "监听目录 (默认: 当前目录)")
 	portFlag := fs.Int("port", 9876, "TCP 监听端口")
 	httpFlag := fs.Int("http", 9786, "HTTP API 端口")
+	peerFlag := fs.String("peer", "", "初始连接地址，多个用逗号分隔 (例: 192.168.1.10:9876,192.168.1.11:9876)")
 	fs.Parse(args)
 
 	wd := *dirFlag
@@ -381,6 +406,17 @@ func runDaemon(args []string) {
 	fmt.Printf("  TCP 端口: %d\n", actualPort)
 	fmt.Printf("  HTTP API: http://127.0.0.1:%d\n", *httpFlag)
 	fmt.Printf("\n使用 lansync status / peers / log 查看运行状态\n")
+
+	// 连接 --peer 指定的初始节点
+	if *peerFlag != "" {
+		for _, addr := range strings.Split(*peerFlag, ",") {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				fmt.Printf("  正在连接: %s\n", addr)
+				go ds.tryConnect(addr, addr)
+			}
+		}
+	}
 
 	// 启动后台协程
 	go ds.discoveryLoop()
@@ -484,6 +520,38 @@ func runLog(args []string) {
 	}
 }
 
+func runConnect(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "用法: lansync connect <地址:端口> [--http PORT]\n")
+		fmt.Fprintf(os.Stderr, "示例: lansync connect 192.168.1.10:9876\n")
+		os.Exit(1)
+	}
+
+	addr := args[0]
+	httpPort := 9786
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--http" && i+1 < len(args) {
+			fmt.Sscanf(args[i+1], "%d", &httpPort)
+			break
+		}
+	}
+
+	body := fmt.Sprintf(`{"addr":"%s"}`, addr)
+	resp, err := http.Post(
+		apiURL(httpPort, "/api/connect"),
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "无法连接守护进程: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(data))
+}
+
 // ─── 入口 ─────────────────────────────────────────────────
 
 func shortStr(s string, n int) string {
@@ -498,16 +566,19 @@ func main() {
 		fmt.Println("LanSync - 局域网文件同步工具")
 		fmt.Println()
 		fmt.Println("用法:")
-		fmt.Println("  lansync daemon  [--dir PATH] [--port PORT]  启动守护进程")
-		fmt.Println("  lansync status  [--http PORT]               查看运行状态")
-		fmt.Println("  lansync peers   [--http PORT]               查看节点列表")
-		fmt.Println("  lansync log     [--http PORT]               查看事件日志")
+		fmt.Println("  lansync daemon  [--dir PATH] [--port PORT] [--peer ADDR]  启动守护进程")
+		fmt.Println("  lansync connect <地址:端口>                                  手动连接节点")
+		fmt.Println("  lansync status  [--http PORT]                               查看运行状态")
+		fmt.Println("  lansync peers   [--http PORT]                               查看节点列表")
+		fmt.Println("  lansync log     [--http PORT]                               查看事件日志")
 		os.Exit(0)
 	}
 
 	switch os.Args[1] {
 	case "daemon":
 		runDaemon(os.Args[2:])
+	case "connect":
+		runConnect(os.Args[2:])
 	case "status":
 		runStatus(os.Args[2:])
 	case "peers":
