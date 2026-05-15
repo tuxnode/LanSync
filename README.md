@@ -18,6 +18,14 @@ LanSync - 局域网文件同步工具
 
 ```
 
+### Build
+```bash
+
+git clone https://github.com/tuxnode/LanSync.git
+cd LanSync && go build ./cmd/...
+
+```
+
 ### Unit Test
 
 ```bash
