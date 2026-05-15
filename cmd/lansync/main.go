@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hashicorp/mdns"
@@ -680,7 +679,7 @@ func runDaemon(args []string) {
 
 	// 等待退出信号
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, shutdownSignals...)
 	<-sigCh
 
 	fmt.Println("\n正在关闭…")
