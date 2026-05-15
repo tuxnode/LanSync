@@ -112,8 +112,13 @@ func (ds *daemonState) upsertPeer(addr, hostname string, st peerStatus) {
 	defer ds.mu.Unlock()
 
 	if existing, ok := ds.peers[addr]; ok {
-		existing.Status = st.String()
-		existing.Hostname = hostname
+		// 不降级：已连接 > 在线 > 离线
+		if st > statusFromString(existing.Status) || existing.Status == stFound.String() && st == stConnected {
+			existing.Status = st.String()
+		}
+		if hostname != "" {
+			existing.Hostname = hostname
+		}
 		existing.LastSeen = time.Now()
 	} else {
 		ds.peers[addr] = &peerEntry{
@@ -123,6 +128,17 @@ func (ds *daemonState) upsertPeer(addr, hostname string, st peerStatus) {
 			LastSeen: time.Now(),
 		}
 		ds.peerOrder = append(ds.peerOrder, addr)
+	}
+}
+
+func statusFromString(s string) peerStatus {
+	switch s {
+	case stConnected.String():
+		return stConnected
+	case stFound.String():
+		return stFound
+	default:
+		return stLost
 	}
 }
 
@@ -289,20 +305,49 @@ func (ds *daemonState) tryConnect(addr, hostname string) {
 		return
 	}
 
-	ds.upsertPeer(addr, hostname, stConnected)
 	ds.addLog(fmt.Sprintf("已连接节点: %s (%s)", hostname, addr), "conn")
 
-	// 找到新连接节点的 PeerID，记录映射
+	// 找到新连接节点的 transport PeerID
 	newPeers := ds.peerIDSet()
+	var peerID string
 	for id := range newPeers {
 		if !oldPeers[id] {
-			ds.mu.Lock()
-			ds.peerIDToAddr[id] = addr
-			ds.mu.Unlock()
-			go ds.sendFullIndex(id)
+			peerID = id
 			break
 		}
 	}
+	if peerID == "" {
+		return
+	}
+
+	// 提取端口以合并发现态条目
+	portPart := ""
+	if idx := strings.LastIndex(addr, ":"); idx > 0 {
+		portPart = addr[idx:]
+	}
+
+	merged := false
+	ds.mu.Lock()
+	if portPart != "" {
+		for existingAddr, p := range ds.peers {
+			if strings.HasSuffix(existingAddr, portPart) && p.Status == stFound.String() {
+				p.Status = stConnected.String()
+				p.Hostname = hostname
+				p.LastSeen = time.Now()
+				ds.peerIDToAddr[peerID] = existingAddr
+				merged = true
+				break
+			}
+		}
+	}
+	ds.mu.Unlock()
+
+	if !merged {
+		ds.peerIDToAddr[peerID] = addr
+		ds.upsertPeer(addr, hostname, stConnected)
+	}
+
+	go ds.sendFullIndex(peerID)
 }
 
 func (ds *daemonState) peerIDSet() map[string]bool {
