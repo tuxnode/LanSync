@@ -417,6 +417,19 @@ func (ds *daemonState) peerMonitorLoop() {
 		for id := range current {
 			if !prev[id] {
 				ds.addLog(fmt.Sprintf("新节点接入: %s", shortStr(id, 16)), "conn")
+				ds.mu.Lock()
+				if _, exists := ds.peerIDToAddr[id]; !exists {
+					addr := "peer:" + shortStr(id, 8)
+					ds.peerIDToAddr[id] = addr
+					ds.peers[addr] = &peerEntry{
+						Addr:     addr,
+						Hostname: shortStr(id, 12),
+						Status:   stConnected.String(),
+						LastSeen: time.Now(),
+					}
+					ds.peerOrder = append(ds.peerOrder, addr)
+				}
+				ds.mu.Unlock()
 				go ds.sendFullIndex(id)
 			}
 		}
@@ -517,18 +530,26 @@ func (ds *daemonState) removePeerByID(peerID string) {
 	delete(ds.indexSent, peerID)
 
 	addr, ok := ds.peerIDToAddr[peerID]
-	if !ok {
+	if ok {
+		delete(ds.peerIDToAddr, peerID)
+		if _, exists := ds.peers[addr]; exists {
+			delete(ds.peers, addr)
+			for i, a := range ds.peerOrder {
+				if a == addr {
+					ds.peerOrder = append(ds.peerOrder[:i], ds.peerOrder[i+1:]...)
+					break
+				}
+			}
+		}
 		return
 	}
 
-	delete(ds.peerIDToAddr, peerID)
-	delete(ds.peers, addr)
-
-	// 从有序列表中移除
-	for i, a := range ds.peerOrder {
-		if a == addr {
-			ds.peerOrder = append(ds.peerOrder[:i], ds.peerOrder[i+1:]...)
-			break
+	// 无地址映射（入站连接等）：遍历所有已连接条目标记为离线
+	for addr, p := range ds.peers {
+		if p.Status == stConnected.String() {
+			p.Status = stLost.String()
+			p.LastSeen = time.Now()
+			_ = addr
 		}
 	}
 }
