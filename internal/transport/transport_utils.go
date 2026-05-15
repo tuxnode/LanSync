@@ -214,6 +214,10 @@ func (t *tcpTransport) dispatchMsg(msg *protocol.SyncMessage, remotePeerID strin
 		if t.onMessage != nil {
 			t.onMessage(remotePeerID, *msg)
 		}
+	case protocol.MsgBye:
+		if t.onMessage != nil {
+			t.onMessage(remotePeerID, *msg)
+		}
 	case protocol.MsgHandShake:
 		// 已握手完成，忽略重入
 	case protocol.MsgHandShakeReject:

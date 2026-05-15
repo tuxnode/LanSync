@@ -71,9 +71,11 @@ type daemonState struct {
 	port      int
 	startTime time.Time
 
-	peers     map[string]*peerEntry
-	peerOrder []string
-	logs      []logEntry
+	peers        map[string]*peerEntry
+	peerOrder    []string
+	peerIDToAddr map[string]string
+	indexSent    map[string]bool
+	logs         []logEntry
 
 	eventCh chan struct{}
 	quitCh  chan struct{}
@@ -81,11 +83,13 @@ type daemonState struct {
 
 func newDaemonState() *daemonState {
 	return &daemonState{
-		peers:     make(map[string]*peerEntry),
-		peerOrder: make([]string, 0),
-		logs:      make([]logEntry, 0),
-		eventCh:   make(chan struct{}, 1),
-		quitCh:    make(chan struct{}),
+		peers:        make(map[string]*peerEntry),
+		peerOrder:    make([]string, 0),
+		peerIDToAddr: make(map[string]string),
+		indexSent:    make(map[string]bool),
+		logs:         make([]logEntry, 0),
+		eventCh:      make(chan struct{}, 1),
+		quitCh:       make(chan struct{}),
 	}
 }
 
@@ -288,10 +292,13 @@ func (ds *daemonState) tryConnect(addr, hostname string) {
 	ds.upsertPeer(addr, hostname, stConnected)
 	ds.addLog(fmt.Sprintf("已连接节点: %s (%s)", hostname, addr), "conn")
 
-	// 找到新连接节点的 PeerID
+	// 找到新连接节点的 PeerID，记录映射
 	newPeers := ds.peerIDSet()
 	for id := range newPeers {
 		if !oldPeers[id] {
+			ds.mu.Lock()
+			ds.peerIDToAddr[id] = addr
+			ds.mu.Unlock()
 			go ds.sendFullIndex(id)
 			break
 		}
@@ -307,6 +314,14 @@ func (ds *daemonState) peerIDSet() map[string]bool {
 }
 
 func (ds *daemonState) sendFullIndex(peerID string) {
+	ds.mu.Lock()
+	if ds.indexSent[peerID] {
+		ds.mu.Unlock()
+		return
+	}
+	ds.indexSent[peerID] = true
+	ds.mu.Unlock()
+
 	idx, err := indexer.GeneralIndex(ds.watchDir)
 	if err != nil {
 		ds.addLog(fmt.Sprintf("生成索引失败: %v", err), "err")
@@ -332,7 +347,7 @@ func (ds *daemonState) sendFullIndex(peerID string) {
 		count++
 	}
 
-	ds.addLog(fmt.Sprintf("已发送完整索引至 %s: %d 个文件", shortStr(peerID, 12), count), "conn")
+	ds.addLog(fmt.Sprintf("已发送完整索引至 %s: %d 个文件", shortStr(peerID, 16), count), "conn")
 }
 
 func (ds *daemonState) peerMonitorLoop() {
@@ -355,8 +370,8 @@ func (ds *daemonState) peerMonitorLoop() {
 
 		// 检测新连接的节点（入站连接）
 		for id := range current {
-			if !prev[id] && len(prev) > 0 {
-				ds.addLog(fmt.Sprintf("新节点接入: %s", shortStr(id, 12)), "conn")
+			if !prev[id] {
+				ds.addLog(fmt.Sprintf("新节点接入: %s", shortStr(id, 16)), "conn")
 				go ds.sendFullIndex(id)
 			}
 		}
@@ -364,7 +379,8 @@ func (ds *daemonState) peerMonitorLoop() {
 		// 检测离开的节点
 		for id := range prev {
 			if !current[id] {
-				ds.addLog(fmt.Sprintf("节点离开: %s", shortStr(id, 12)), "warn")
+				ds.addLog(fmt.Sprintf("节点离开: %s", shortStr(id, 16)), "warn")
+				ds.removePeerByID(id)
 			}
 		}
 		prev = current
@@ -449,6 +465,29 @@ func (ds *daemonState) handleRecvFileData(msg protocol.SyncMessage) {
 	ds.addLog(fmt.Sprintf("✓ 文件已同步: %s (%d bytes)", msg.RelPath, len(data)), "sync")
 }
 
+func (ds *daemonState) removePeerByID(peerID string) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	delete(ds.indexSent, peerID)
+
+	addr, ok := ds.peerIDToAddr[peerID]
+	if !ok {
+		return
+	}
+
+	delete(ds.peerIDToAddr, peerID)
+	delete(ds.peers, addr)
+
+	// 从有序列表中移除
+	for i, a := range ds.peerOrder {
+		if a == addr {
+			ds.peerOrder = append(ds.peerOrder[:i], ds.peerOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 // ─── 守护进程 ──────────────────────────────────────────────
 
 func runDaemon(args []string) {
@@ -530,6 +569,10 @@ func runDaemon(args []string) {
 
 		case protocol.MsgError:
 			ds.addLog(fmt.Sprintf("← %s 错误: %s", shortStr(peerID, 10), msg.RelPath), "err")
+
+		case protocol.MsgBye:
+			ds.addLog(fmt.Sprintf("节点主动退出: %s", shortStr(peerID, 10)), "warn")
+			ds.removePeerByID(peerID)
 		}
 	})
 
@@ -573,6 +616,14 @@ func runDaemon(args []string) {
 	<-sigCh
 
 	fmt.Println("\n正在关闭…")
+
+	// 广播退出消息通知所有在线节点
+	byeMsg := protocol.SyncMessage{
+		Type: protocol.MsgBye,
+	}
+	ds.addLog("→ 广播退出通知", "warn")
+	ds.tr.Broadcast(byeMsg)
+
 	close(ds.quitCh)
 	time.Sleep(200 * time.Millisecond)
 }

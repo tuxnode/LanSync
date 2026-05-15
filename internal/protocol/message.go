@@ -11,6 +11,7 @@ const (
 	MsgError                              // 错误信息
 	MsgHandShake                          // 握手
 	MsgHandShakeReject                    // 握手拒绝（裁决落败）
+	MsgBye                                // 节点退出通知
 )
 
 type SyncMessage struct {
