@@ -19,11 +19,20 @@ LanSync - 局域网文件同步工具
 ```
 
 ### Build
-```bash
 
+```bash
 git clone https://github.com/tuxnode/LanSync.git
 cd LanSync && go build ./cmd/...
+```
 
+跨平台编译：
+
+```bash
+# macOS / Linux
+go build -o lansync ./cmd/lansync/
+
+# Windows (在 macOS/Linux 上交叉编译)
+GOOS=windows GOARCH=amd64 go build -o lansync.exe ./cmd/lansync/
 ```
 
 ### Unit Test
