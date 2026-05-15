@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -278,15 +279,64 @@ func (ds *daemonState) discoveryLoop() {
 }
 
 func (ds *daemonState) tryConnect(addr, hostname string) {
+	oldPeers := ds.peerIDSet()
+
 	if err := ds.tr.ConnectTo(addr); err != nil {
 		return
 	}
+
 	ds.upsertPeer(addr, hostname, stConnected)
 	ds.addLog(fmt.Sprintf("已连接节点: %s (%s)", hostname, addr), "conn")
+
+	// 找到新连接节点的 PeerID
+	newPeers := ds.peerIDSet()
+	for id := range newPeers {
+		if !oldPeers[id] {
+			go ds.sendFullIndex(id)
+			break
+		}
+	}
+}
+
+func (ds *daemonState) peerIDSet() map[string]bool {
+	set := make(map[string]bool)
+	for _, id := range ds.tr.Peers() {
+		set[id] = true
+	}
+	return set
+}
+
+func (ds *daemonState) sendFullIndex(peerID string) {
+	idx, err := indexer.GeneralIndex(ds.watchDir)
+	if err != nil {
+		ds.addLog(fmt.Sprintf("生成索引失败: %v", err), "err")
+		return
+	}
+
+	count := 0
+	for relPath, info := range idx {
+		if info.IsFolder {
+			continue
+		}
+		msg := protocol.SyncMessage{
+			Type:    protocol.MsgNotify,
+			RelPath: relPath,
+			Hash:    info.Hash,
+			Size:    info.Size,
+			ModTime: info.ModTime,
+		}
+		if err := ds.tr.SendTo(peerID, msg); err != nil {
+			ds.addLog(fmt.Sprintf("发送索引中断 [%s]: %v", relPath, err), "err")
+			return
+		}
+		count++
+	}
+
+	ds.addLog(fmt.Sprintf("已发送完整索引至 %s: %d 个文件", shortStr(peerID, 12), count), "conn")
 }
 
 func (ds *daemonState) peerMonitorLoop() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	prev := make(map[string]bool)
@@ -303,6 +353,15 @@ func (ds *daemonState) peerMonitorLoop() {
 			current[id] = true
 		}
 
+		// 检测新连接的节点（入站连接）
+		for id := range current {
+			if !prev[id] && len(prev) > 0 {
+				ds.addLog(fmt.Sprintf("新节点接入: %s", shortStr(id, 12)), "conn")
+				go ds.sendFullIndex(id)
+			}
+		}
+
+		// 检测离开的节点
 		for id := range prev {
 			if !current[id] {
 				ds.addLog(fmt.Sprintf("节点离开: %s", shortStr(id, 12)), "warn")
@@ -310,6 +369,84 @@ func (ds *daemonState) peerMonitorLoop() {
 		}
 		prev = current
 	}
+}
+
+// ─── 同步处理 ──────────────────────────────────────────────
+
+func (ds *daemonState) handleRecvNotify(peerID string, msg protocol.SyncMessage) {
+	localPath := filepath.Join(ds.watchDir, msg.RelPath)
+
+	info, err := os.Stat(localPath)
+	if err == nil && !info.IsDir() {
+		localHash, hashErr := indexer.CaculateHash(localPath)
+		if hashErr == nil && localHash == msg.Hash {
+			return // 文件已存在且 hash 一致，跳过
+		}
+	}
+
+	// 文件缺失或 hash 不一致 → 请求下载
+	req := protocol.SyncMessage{
+		Type:    protocol.MsgPullRequest,
+		RelPath: msg.RelPath,
+	}
+	if err := ds.tr.SendTo(peerID, req); err != nil {
+		ds.addLog(fmt.Sprintf("请求下载失败 [%s]: %v", msg.RelPath, err), "err")
+		return
+	}
+	ds.addLog(fmt.Sprintf("→ 请求下载: %s", msg.RelPath), "sync")
+}
+
+func (ds *daemonState) handleRecvPullRequest(peerID string, msg protocol.SyncMessage) {
+	localPath := filepath.Join(ds.watchDir, msg.RelPath)
+
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		errMsg := protocol.SyncMessage{
+			Type:    protocol.MsgError,
+			RelPath: msg.RelPath,
+			Data:    fmt.Sprintf("读取文件失败: %v", err),
+		}
+		ds.tr.SendTo(peerID, errMsg)
+		return
+	}
+
+	reply := protocol.SyncMessage{
+		Type:    protocol.MsgFileData,
+		RelPath: msg.RelPath,
+		Size:    int64(len(data)),
+		Data:    base64Encode(data),
+	}
+	if err := ds.tr.SendTo(peerID, reply); err != nil {
+		ds.addLog(fmt.Sprintf("发送文件失败 [%s]: %v", msg.RelPath, err), "err")
+		return
+	}
+	ds.addLog(fmt.Sprintf("→ 发送文件: %s (%d bytes)", msg.RelPath, len(data)), "sync")
+}
+
+func (ds *daemonState) handleRecvFileData(msg protocol.SyncMessage) {
+	localPath := filepath.Join(ds.watchDir, msg.RelPath)
+
+	data, err := base64Decode(msg.Data)
+	if err != nil {
+		ds.addLog(fmt.Sprintf("解码文件失败 [%s]: %v", msg.RelPath, err), "err")
+		return
+	}
+
+	dir := filepath.Dir(localPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		ds.addLog(fmt.Sprintf("创建目录失败 [%s]: %v", dir, err), "err")
+		return
+	}
+
+	// 写入前标记忽略，防止 watcher 检测到后回环广播
+	ds.fsw.AddIgnorePath(localPath)
+
+	if err := os.WriteFile(localPath, data, 0644); err != nil {
+		ds.addLog(fmt.Sprintf("写入文件失败 [%s]: %v", msg.RelPath, err), "err")
+		return
+	}
+
+	ds.addLog(fmt.Sprintf("✓ 文件已同步: %s (%d bytes)", msg.RelPath, len(data)), "sync")
 }
 
 // ─── 守护进程 ──────────────────────────────────────────────
@@ -381,8 +518,16 @@ func runDaemon(args []string) {
 		switch msg.Type {
 		case protocol.MsgNotify:
 			ds.addLog(fmt.Sprintf("← %s 收到变更: %s", shortStr(peerID, 10), msg.RelPath), "sync")
+			go ds.handleRecvNotify(peerID, msg)
+
 		case protocol.MsgPullRequest:
 			ds.addLog(fmt.Sprintf("← %s 请求下载: %s", shortStr(peerID, 10), msg.RelPath), "info")
+			go ds.handleRecvPullRequest(peerID, msg)
+
+		case protocol.MsgFileData:
+			ds.addLog(fmt.Sprintf("← %s 接收文件: %s (%d bytes)", shortStr(peerID, 10), msg.RelPath, len(msg.Data)), "sync")
+			go ds.handleRecvFileData(msg)
+
 		case protocol.MsgError:
 			ds.addLog(fmt.Sprintf("← %s 错误: %s", shortStr(peerID, 10), msg.RelPath), "err")
 		}
@@ -559,6 +704,14 @@ func shortStr(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }
 
 func main() {

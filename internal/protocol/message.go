@@ -21,6 +21,7 @@ type SyncMessage struct {
 	ModTime   int64       `json:"mod_time,omitempty"`
 	PeerID    string      `json:"peer_id,omitempty"`
 	Timestamp int64       `json:"timestamp,omitempty"`
+	Data      string      `json:"data,omitempty"` // base64 编码的文件内容
 }
 
 func (m SyncMessage) String() string {
