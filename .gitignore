@@ -1,2 +1,11 @@
 cover.out
 lansync*
+
+# Qt/CMake client builds
+clients/qt-lansync/build*/
+clients/qt-lansync/out/
+clients/qt-lansync/.vs/
+clients/qt-lansync/.qtcreator/
+clients/qt-lansync/*.user
+clients/qt-lansync/*.exe
+clients/qt-lansync/*.dll

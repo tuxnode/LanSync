@@ -35,6 +35,19 @@ go build -o lansync ./cmd/lansync/
 GOOS=windows GOARCH=amd64 go build -o lansync.exe ./cmd/lansync/
 ```
 
+### Qt Desktop Client
+
+A Qt Widgets desktop client is available under `clients/qt-lansync`.
+
+It uses the same JSON `SyncMessage` protocol as the Go daemon and supports TCP sync, SHA-256 file indexing, file watching, manual peer connection, and LAN discovery.
+
+Build it with Qt 6 or Qt 5.15:
+
+```bash
+cmake -S clients/qt-lansync -B clients/qt-lansync/build
+cmake --build clients/qt-lansync/build
+```
+
 ### Unit Test
 
 ```bash
