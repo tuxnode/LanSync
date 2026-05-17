@@ -13,7 +13,7 @@ class MdnsDiscovery : public QObject {
 
 public:
     explicit MdnsDiscovery(QObject *parent = nullptr);
-    bool start(quint16 port, const QString &peerId);
+    bool start(quint16 port, const QString &peerId, const QHostAddress &ifaceAddr = QHostAddress::Any);
     void stop();
 
 signals:
@@ -54,6 +54,7 @@ private:
     QString m_instance;
     QString m_hostName;
     QHostAddress m_advertisedIp;
+    QHostAddress m_boundIfAddr;
     QHash<QString, QDateTime> m_recent;
     QSet<QTcpSocket *> m_scanSockets;
 };

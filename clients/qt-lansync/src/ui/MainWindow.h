@@ -2,6 +2,7 @@
 
 #include "core/SyncEngine.h"
 
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -26,6 +27,7 @@ private:
     SyncEngine m_engine;
     QLineEdit *m_dirEdit = nullptr;
     QLineEdit *m_portEdit = nullptr;
+    QComboBox *m_ifaceCombo = nullptr;
     QLineEdit *m_peerEdit = nullptr;
     QPushButton *m_startButton = nullptr;
     QLabel *m_idLabel = nullptr;

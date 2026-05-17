@@ -6,6 +6,7 @@
 
 #include <QDateTime>
 #include <QHash>
+#include <QHostAddress>
 #include <QObject>
 #include <QStringList>
 
@@ -23,7 +24,7 @@ class SyncEngine : public QObject {
 public:
     explicit SyncEngine(QObject *parent = nullptr);
 
-    bool start(const QString &dir, quint16 port);
+    bool start(const QString &dir, quint16 port, const QHostAddress &bindAddr = QHostAddress::Any);
     void stop();
     void connectTo(const QString &addr);
     void resendIndex();

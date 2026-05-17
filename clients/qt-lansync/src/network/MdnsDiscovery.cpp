@@ -26,12 +26,13 @@ MdnsDiscovery::MdnsDiscovery(QObject *parent)
     connect(&m_socket, &QUdpSocket::readyRead, this, &MdnsDiscovery::readDatagrams);
 }
 
-bool MdnsDiscovery::start(quint16 port, const QString &peerId)
+bool MdnsDiscovery::start(quint16 port, const QString &peerId, const QHostAddress &ifaceAddr)
 {
     stop();
 
     m_port = port;
-    m_advertisedIp = localIPv4();
+    m_boundIfAddr = ifaceAddr;
+    m_advertisedIp = ifaceAddr.isNull() || ifaceAddr == QHostAddress::Any ? localIPv4() : ifaceAddr;
     const QString baseHost = sanitizeLabel(QHostInfo::localHostName().isEmpty() ? QStringLiteral("lansync-node") : QHostInfo::localHostName());
     m_hostName = baseHost + QStringLiteral(".local");
     m_instance = baseHost + "-" + peerId.left(8) + "." + Service;
@@ -96,6 +97,7 @@ void MdnsDiscovery::stop()
         m_socket.close();
     }
     m_port = 0;
+    m_boundIfAddr.clear();
 }
 
 void MdnsDiscovery::sendQuery()
@@ -152,10 +154,23 @@ void MdnsDiscovery::scanLocalNetworks()
             const quint32 local = ip.toIPv4Address();
             localIps.insert(local);
 
+            if (!m_boundIfAddr.isNull() && m_boundIfAddr != QHostAddress::Any
+                && local != m_boundIfAddr.toIPv4Address()) {
+                continue;
+            }
+
             const quint32 network = local & 0xffffff00U;
             for (quint32 host = 1; host < 255; ++host) {
                 targets.insert(network | host);
             }
+        }
+    }
+
+    if (targets.isEmpty() && !m_boundIfAddr.isNull() && m_boundIfAddr != QHostAddress::Any) {
+        const quint32 local = m_boundIfAddr.toIPv4Address();
+        const quint32 network = local & 0xffffff00U;
+        for (quint32 host = 1; host < 255; ++host) {
+            targets.insert(network | host);
         }
     }
 

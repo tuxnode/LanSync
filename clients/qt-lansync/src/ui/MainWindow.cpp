@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "network/NetInterface.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -8,6 +9,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHostAddress>
 #include <QMessageBox>
 #include <QSpinBox>
 #include <QSplitter>
@@ -47,6 +49,17 @@ void MainWindow::buildUi()
     config->addWidget(m_portEdit, 0, 4);
     config->addWidget(m_startButton, 0, 5);
 
+    m_ifaceCombo = new QComboBox(configBox);
+    const QList<NetInterfaceEntry> ifaces = NetInterface::availableInterfaces();
+    m_ifaceCombo->addItem(QStringLiteral("自动 (所有网卡)"), QString());
+    for (const NetInterfaceEntry &entry : ifaces) {
+        m_ifaceCombo->addItem(QStringLiteral("%1 - %2").arg(entry.description, entry.address.toString()), entry.address.toString());
+    }
+    m_ifaceCombo->setMinimumWidth(180);
+
+    config->addWidget(new QLabel(QStringLiteral("网卡")), 1, 0);
+    config->addWidget(m_ifaceCombo, 1, 1, 1, 4);
+
     m_peerEdit = new QLineEdit(configBox);
     m_peerEdit->setPlaceholderText(QStringLiteral("192.168.1.10:9876"));
     auto *connectButton = new QPushButton(QStringLiteral("连接节点"), configBox);
@@ -56,10 +69,10 @@ void MainWindow::buildUi()
     auto *resendButton = new QPushButton(QStringLiteral("重新发送索引"), configBox);
     connect(resendButton, &QPushButton::clicked, &m_engine, &SyncEngine::resendIndex);
 
-    config->addWidget(new QLabel(QStringLiteral("手动连接")), 1, 0);
-    config->addWidget(m_peerEdit, 1, 1, 1, 4);
-    config->addWidget(connectButton, 1, 5);
-    config->addWidget(resendButton, 1, 6);
+    config->addWidget(new QLabel(QStringLiteral("手动连接")), 2, 0);
+    config->addWidget(m_peerEdit, 2, 1, 1, 4);
+    config->addWidget(connectButton, 2, 5);
+    config->addWidget(resendButton, 2, 6);
 
     root->addWidget(configBox);
 
@@ -120,7 +133,13 @@ void MainWindow::toggleStart()
         return;
     }
 
-    if (!m_engine.start(m_dirEdit->text(), port)) {
+    QHostAddress bindAddr(QHostAddress::Any);
+    const QString ifaceData = m_ifaceCombo->currentData().toString();
+    if (!ifaceData.isEmpty()) {
+        bindAddr = QHostAddress(ifaceData);
+    }
+
+    if (!m_engine.start(m_dirEdit->text(), port, bindAddr)) {
         QMessageBox::critical(this, QStringLiteral("启动失败"), QStringLiteral("无法启动 TCP 监听，请检查端口是否被占用"));
     }
     refreshState();
@@ -145,6 +164,7 @@ void MainWindow::refreshState()
     m_startButton->setText(running ? QStringLiteral("停止") : QStringLiteral("启动"));
     m_dirEdit->setEnabled(!running);
     m_portEdit->setEnabled(!running);
+    m_ifaceCombo->setEnabled(!running);
     m_statusLabel->setText(running ? QStringLiteral("运行中  TCP %1").arg(m_engine.port()) : QStringLiteral("已停止"));
     m_idLabel->setText(QStringLiteral("ID: %1").arg(m_engine.myId()));
     m_countLabel->setText(QStringLiteral("连接 %1 / 节点 %2 / 同步 %3 / 发送 %4 / 请求 %5")

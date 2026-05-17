@@ -19,17 +19,17 @@ SyncEngine::SyncEngine(QObject *parent)
     connect(&m_discovery, &MdnsDiscovery::discoveryLog, this, &SyncEngine::addLog);
 }
 
-bool SyncEngine::start(const QString &dir, quint16 port)
+bool SyncEngine::start(const QString &dir, quint16 port, const QHostAddress &bindAddr)
 {
     stop();
     m_watchDir = QDir(dir).absolutePath();
     QDir().mkpath(m_watchDir);
 
-    if (!m_transport.start(port)) {
+    if (!m_transport.start(port, bindAddr)) {
         return false;
     }
     m_watcher.start(m_watchDir);
-    m_discovery.start(m_transport.port(), m_transport.myId());
+    m_discovery.start(m_transport.port(), m_transport.myId(), bindAddr);
     m_running = true;
 
     addLog(QStringLiteral("LanSync Qt 已启动，监听目录: %1").arg(m_watchDir), QStringLiteral("info"));

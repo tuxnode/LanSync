@@ -17,12 +17,12 @@ Transport::~Transport()
     stop();
 }
 
-bool Transport::start(quint16 port)
+bool Transport::start(quint16 port, const QHostAddress &bindAddr)
 {
     if (m_server.isListening()) {
         return true;
     }
-    if (!m_server.listen(QHostAddress::Any, port)) {
+    if (!m_server.listen(bindAddr, port)) {
         emit transportLog(QStringLiteral("启动 TCP 监听失败: %1").arg(m_server.errorString()), QStringLiteral("err"));
         return false;
     }

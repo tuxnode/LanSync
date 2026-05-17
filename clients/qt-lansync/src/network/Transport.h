@@ -3,6 +3,7 @@
 #include "protocol/Protocol.h"
 
 #include <QHash>
+#include <QHostAddress>
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -14,7 +15,7 @@ public:
     explicit Transport(QObject *parent = nullptr);
     ~Transport() override;
 
-    bool start(quint16 port);
+    bool start(quint16 port, const QHostAddress &bindAddr = QHostAddress::Any);
     void stop();
     void connectTo(const QString &addr);
     bool sendTo(const QString &peerId, const SyncMessage &message);

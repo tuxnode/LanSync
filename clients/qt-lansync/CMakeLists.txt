@@ -47,6 +47,7 @@ add_executable(qt-lansync
     src/filesystem/FileWatcher.h
     src/network/MdnsDiscovery.cpp
     src/network/MdnsDiscovery.h
+    src/network/NetInterface.h
     src/network/Transport.cpp
     src/network/Transport.h
     src/protocol/Protocol.cpp
