@@ -35,6 +35,14 @@ go build -o lansync ./cmd/lansync/
 GOOS=windows GOARCH=amd64 go build -o lansync.exe ./cmd/lansync/
 ```
 
+编译GUI程序:
+```bash
+sudo apt install libxxf86vm-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev
+
+go build ./cmd/lansync-gui/...
+
+```
+
 ### Qt Desktop Client
 
 A Qt Widgets desktop client is available under `clients/qt-lansync`.
