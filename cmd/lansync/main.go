@@ -298,7 +298,7 @@ func (ds *daemonState) discoveryLoop() {
 			ds.upsertPeer(addr, hostname, stFound)
 
 			go ds.tryConnect(addr, hostname)
-		})
+		}, "")
 
 		// 标记本轮未再出现的发现态节点为离线（已连接的不受影响）
 		ds.mu.Lock()
@@ -606,7 +606,7 @@ func runDaemon(args []string) {
 	defer fsw.WatcherStop()
 
 	// 初始化 mDNS（失败不阻止启动，仅丧失自动发现/被发现的能⼒）
-	mds, err := discovery.StartServer(actualPort)
+	mds, err := discovery.StartServer(actualPort, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告: mDNS 服务启动失败: %v (自动发现不可用)\n", err)
 		mds = nil

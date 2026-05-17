@@ -10,7 +10,7 @@ import (
 func TestMDNSDiscovery(t *testing.T) {
 	testPort := 9999
 	// 1. 启动一个模拟的 mDNS Server
-	server, err := StartServer(testPort)
+	server, err := StartServer(testPort, "")
 	if err != nil {
 		t.Fatalf("Failed to start mDNS server: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestMDNSDiscovery(t *testing.T) {
 func TestDiscoverNodes(t *testing.T) {
 	// 1. 启动一个真实的节点供发现
 	testPort := 8888
-	server, _ := StartServer(testPort)
+	server, _ := StartServer(testPort, "")
 	defer server.Shutdown()
 
 	// 2. 创建一个同步通道，用于在测试中获取异步结果
@@ -59,7 +59,7 @@ func TestDiscoverNodes(t *testing.T) {
 		if entry.Port == testPort {
 			resultChan <- entry
 		}
-	})
+	}, "")
 
 	// 4. 验证结果
 	select {
