@@ -1,5 +1,4 @@
 cover.out
-lansync*
 
 # Qt/CMake client builds
 clients/qt-lansync/build*/
